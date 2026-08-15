@@ -23,11 +23,16 @@ model CandidateProfile {
   userId                 String   @unique
   targetRoles            String[]
   skills                 String[]
+  searchKeywords         String[]
   experienceSummary      String?
   preferredLocations     String[]
+  workModes              String[]
+  minimumSalary          Int?
   compensationPreference String?
   constraints            String?
   profileSummary         String?
+  resumeFileName         String?
+  resumeText             String?
   user                   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt              DateTime @default(now())
   updatedAt              DateTime @updatedAt

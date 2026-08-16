@@ -111,6 +111,7 @@ export async function analyzeJobWithLLM(profile: AnalysisProfile, job: AnalysisJ
   const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: { "content-type": "application/json", Authorization: `Bearer ${apiKey}` },
+    signal: AbortSignal.timeout(30000),
     body: JSON.stringify({
       model,
       temperature: 0.1,

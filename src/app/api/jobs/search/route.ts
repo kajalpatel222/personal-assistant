@@ -58,8 +58,7 @@ export async function POST(request: NextRequest) {
     minimumSalary: Number.parseInt(body.minimumSalary?.replace(/[^0-9]/g, "") || "", 10) || null,
   };
   await prisma.candidateProfile.upsert({ where: { userId: user.id }, update: profile, create: { userId: user.id, ...profile } });
-  const rankedJobs = [];
-  for (const job of jobs) {
+  const rankedJobs = await Promise.all(jobs.map(async (job) => {
     const existing = job.url ? await prisma.job.findFirst({ where: { userId: user.id, url: job.url } }) : null;
     let savedJob;
     if (existing) {
@@ -69,8 +68,8 @@ export async function POST(request: NextRequest) {
     }
     const analysis = await analyzeJobWithLLM(profile, savedJob);
     await prisma.jobAnalysis.upsert({ where: { jobId: savedJob.id }, update: analysis, create: { jobId: savedJob.id, ...analysis } });
-    rankedJobs.push({ ...job, id: savedJob.id, analysis });
-  }
+    return { ...job, id: savedJob.id, analysis };
+  }));
 
   rankedJobs.sort((a, b) => b.analysis.matchScore - a.analysis.matchScore);
   return NextResponse.json({ jobs: rankedJobs, storage: "saved" });

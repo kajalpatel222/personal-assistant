@@ -24,6 +24,15 @@ export type JobAnalysisResult = {
   reasoning: string;
 };
 
+export function passesHardFilters(profile: AnalysisProfile, job: AnalysisJob) {
+  const locations = profile.preferredLocations ?? [];
+  const jobLocation = clean(job.location ?? "");
+  const locationMatches = !locations.length || locations.some((location) => jobLocation.includes(clean(location)) || clean(location).includes(jobLocation));
+  const salary = parseSalary(job.salary);
+  const salaryMatches = profile.minimumSalary == null || salary == null || salary >= profile.minimumSalary;
+  return locationMatches && salaryMatches;
+}
+
 const clean = (value: string) => value.toLowerCase().replace(/[^a-z0-9+#.]+/g, " ").trim();
 const tokens = (value: string) => new Set(clean(value).split(/\s+/).filter((token) => token.length > 1));
 

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { dedupeJobs } from "@/lib/jobs/dedupe";
 import { normalizeJobs } from "@/lib/jobs/normalize";
 import { prisma } from "@/lib/db";
-import { analyzeJobWithLLM } from "@/lib/jobs/analyze";
+import { analyzeJobWithLLM, passesHardFilters } from "@/lib/jobs/analyze";
 
 type ApifyJob = {
   title?: string;
@@ -60,7 +60,8 @@ export async function POST(request: NextRequest) {
     minimumSalary: Number.parseInt(body.minimumSalary?.replace(/[^0-9]/g, "") || "", 10) || null,
   };
   await prisma.candidateProfile.upsert({ where: { userId: user.id }, update: profile, create: { userId: user.id, ...profile } });
-  const rankedJobs = await Promise.all(jobs.map(async (job) => {
+  const eligibleJobs = jobs.filter((job) => passesHardFilters(profile, job));
+  const rankedJobs = await Promise.all(eligibleJobs.map(async (job) => {
     const existing = job.url ? await prisma.job.findFirst({ where: { userId: user.id, url: job.url } }) : null;
     let savedJob;
     if (existing) {

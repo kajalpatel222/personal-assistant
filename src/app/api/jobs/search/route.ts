@@ -67,18 +67,24 @@ export async function POST(request: NextRequest) {
   await prisma.candidateProfile.upsert({ where: { userId: user.id }, update: profile, create: { userId: user.id, ...profile } });
   const eligibleJobs = jobs.filter((job) => passesHardFilters(profile, { role: job.title, company: job.company, location: job.location, description: job.description, salary: job.salary }));
   console.info(`[job-search] ${eligibleJobs.length} jobs passed hard filters`);
-  const rankedJobs = await Promise.all(eligibleJobs.map(async (job) => {
-    const existing = job.url ? await prisma.job.findFirst({ where: { userId: user.id, url: job.url } }) : null;
-    let savedJob;
-    if (existing) {
-      savedJob = await prisma.job.update({ where: { id: existing.id }, data: { company: job.company, role: job.title, description: job.description, salary: job.salary, location: job.location, source: job.source, postedAt: job.postedAt } });
-    } else {
-      savedJob = await prisma.job.create({ data: { userId: user.id, company: job.company, role: job.title, description: job.description, salary: job.salary, location: job.location, url: job.url || null, source: job.source, postedAt: job.postedAt } });
-    }
-    const analysis = await analyzeJobWithLLM(profile, { role: job.title, company: job.company, location: job.location, description: job.description, salary: job.salary });
-    await prisma.jobAnalysis.upsert({ where: { jobId: savedJob.id }, update: analysis, create: { jobId: savedJob.id, ...analysis } });
-    return { ...job, id: savedJob.id, analysis };
-  }));
+  let rankedJobs;
+  try {
+    rankedJobs = await Promise.all(eligibleJobs.map(async (job) => {
+      const existing = job.url ? await prisma.job.findFirst({ where: { userId: user.id, url: job.url } }) : null;
+      let savedJob;
+      if (existing) {
+        savedJob = await prisma.job.update({ where: { id: existing.id }, data: { company: job.company, role: job.title, description: job.description, salary: job.salary, location: job.location, source: job.source, postedAt: job.postedAt } });
+      } else {
+        savedJob = await prisma.job.create({ data: { userId: user.id, company: job.company, role: job.title, description: job.description, salary: job.salary, location: job.location, url: job.url || null, source: job.source, postedAt: job.postedAt } });
+      }
+      const analysis = await analyzeJobWithLLM(profile, { role: job.title, company: job.company, location: job.location, description: job.description, salary: job.salary });
+      await prisma.jobAnalysis.upsert({ where: { jobId: savedJob.id }, update: analysis, create: { jobId: savedJob.id, ...analysis } });
+      return { ...job, id: savedJob.id, analysis };
+    }));
+  } catch (error) {
+    console.error("[job-search] analysis failed", error);
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Job analysis failed." }, { status: 502 });
+  }
 
   rankedJobs.sort((a, b) => b.analysis.matchScore - a.analysis.matchScore);
   console.info(`[job-search] completed in ${Date.now() - startedAt}ms`);

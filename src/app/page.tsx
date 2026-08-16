@@ -65,9 +65,11 @@ export default function Home() {
     setError("");
     try {
       const response = await fetch("/api/jobs/search", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ roles: savedProfile.targetRoles, locations: savedProfile.preferredLocations, keywords: savedProfile.keywords, workMode: savedProfile.workMode, minimumSalary: savedProfile.minimumSalary }) });
-      const result = await response.json() as SavedJobsResult;
+      const responseText = await response.text();
+      let result: SavedJobsResult = {};
+      try { result = responseText ? JSON.parse(responseText) as SavedJobsResult : {}; } catch { result = {}; }
       if (!response.ok) {
-        setError(result.error || `Job search failed (${response.status}).`);
+        setError(result.error || `Job search failed (${response.status}). The server did not return a valid JSON response.`);
         return;
       }
       setJobs(result.jobs || []);

@@ -105,8 +105,8 @@ function parseAnalysis(value: unknown): JobAnalysisResult {
 
 export async function analyzeJobWithLLM(profile: AnalysisProfile, job: AnalysisJob): Promise<JobAnalysisResult> {
   const apiKey = process.env.OPENROUTER_API_KEY;
-  const model = process.env.OPENROUTER_MODEL;
-  if (!apiKey || !model) throw new Error("OPENROUTER_API_KEY and OPENROUTER_MODEL must be configured.");
+  const model = process.env.OPENROUTER_MODEL || "liquid/lfm-2.5-2.6b:free";
+  if (!apiKey) throw new Error("OPENROUTER_API_KEY must be configured.");
 
   const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",

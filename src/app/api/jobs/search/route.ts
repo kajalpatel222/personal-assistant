@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { dedupeJobs } from "@/lib/jobs/dedupe";
+import { normalizeJobs } from "@/lib/jobs/normalize";
 
 type ApifyJob = {
   title?: string;
@@ -38,6 +40,6 @@ export async function POST(request: NextRequest) {
   }
 
   const items = await response.json() as ApifyJob[];
-  const jobs = items.map((job) => ({ title: job.title || "Untitled role", company: job.company || "Unknown company", location: job.location || location, description: job.description || "", url: job.viewJobUrl || job.applyUrl || "", salary: typeof job.salary === "string" ? job.salary : job.salary?.text || null, posted: job.postedRelative || null }));
+  const jobs = dedupeJobs(normalizeJobs(items));
   return NextResponse.json({ jobs });
 }

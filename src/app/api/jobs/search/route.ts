@@ -65,7 +65,7 @@ export async function POST(request: NextRequest) {
     minimumSalary: Number.parseInt(body.minimumSalary?.replace(/[^0-9]/g, "") || "", 10) || null,
   };
   await prisma.candidateProfile.upsert({ where: { userId: user.id }, update: profile, create: { userId: user.id, ...profile } });
-  const eligibleJobs = jobs.filter((job) => passesHardFilters(profile, job));
+  const eligibleJobs = jobs.filter((job) => passesHardFilters(profile, { role: job.title, company: job.company, location: job.location, description: job.description, salary: job.salary }));
   console.info(`[job-search] ${eligibleJobs.length} jobs passed hard filters`);
   const rankedJobs = await Promise.all(eligibleJobs.map(async (job) => {
     const existing = job.url ? await prisma.job.findFirst({ where: { userId: user.id, url: job.url } }) : null;
@@ -75,7 +75,7 @@ export async function POST(request: NextRequest) {
     } else {
       savedJob = await prisma.job.create({ data: { userId: user.id, company: job.company, role: job.title, description: job.description, salary: job.salary, location: job.location, url: job.url || null, source: job.source, postedAt: job.postedAt } });
     }
-    const analysis = await analyzeJobWithLLM(profile, savedJob);
+    const analysis = await analyzeJobWithLLM(profile, { role: job.title, company: job.company, location: job.location, description: job.description, salary: job.salary });
     await prisma.jobAnalysis.upsert({ where: { jobId: savedJob.id }, update: analysis, create: { jobId: savedJob.id, ...analysis } });
     return { ...job, id: savedJob.id, analysis };
   }));

@@ -38,7 +38,8 @@ export async function POST(request: NextRequest) {
   const response = await fetch(`https://api.apify.com/v2/acts/${actorId}/run-sync-get-dataset-items?token=${token}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ searches: [{ query: queries, location, country: "US" }], maxRecords: 10, maxPagesPerSearch: 1 }),
+    signal: AbortSignal.timeout(20000),
+    body: JSON.stringify({ searches: [{ query: queries, location, country: "US" }], maxRecords: 5, maxPagesPerSearch: 1 }),
   });
   console.info(`[job-search] Apify completed in ${Date.now() - startedAt}ms`);
 

@@ -22,6 +22,7 @@ export type JobAnalysisResult = {
   gaps: string[];
   concerns: string[];
   reasoning: string;
+  modelUsed?: string;
 };
 
 export function passesHardFilters(profile: AnalysisProfile, job: AnalysisJob) {
@@ -126,7 +127,7 @@ export async function analyzeJobWithLLM(profile: AnalysisProfile, job: AnalysisJ
       temperature: 0.1,
       response_format: { type: "json_object" },
       messages: [
-        { role: "system", content: "You are a careful career-matching assistant. Evaluate the candidate against the job using only the supplied information. Do not invent experience. Return only valid JSON with keys matchScore (integer 0-100), recommendation, strengths (array of strings), gaps (array of strings), concerns (array of strings), and reasoning (string)." },
+        { role: "system", content: "You are a careful career-matching assistant. Evaluate the candidate against the job using only the supplied information. Do not invent experience. Return only valid JSON with keys matchScore (integer 0-100), recommendation, strengths (array of strings), gaps (array of strings), concerns (array of strings), and reasoning (string). Keep the UI concise: maximum 3 strengths, 3 gaps, 2 concerns; each item under 12 words; reasoning under 30 words." },
         { role: "user", content: JSON.stringify({ candidateProfile: profile, job }) },
       ],
     }),
@@ -140,5 +141,5 @@ export async function analyzeJobWithLLM(profile: AnalysisProfile, job: AnalysisJ
   const payload = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
   const content = payload.choices?.[0]?.message?.content;
   if (!content) throw new Error("The model returned no analysis.");
-  return parseAnalysis(JSON.parse(content));
+  return { ...parseAnalysis(JSON.parse(content)), modelUsed: payload.model || model };
 }

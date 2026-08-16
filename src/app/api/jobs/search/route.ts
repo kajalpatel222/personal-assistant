@@ -82,7 +82,9 @@ export async function POST(request: NextRequest) {
         savedJob = await prisma.job.create({ data: { userId: user.id, company: job.company, role: job.title, description: job.description, salary: job.salary, location: job.location, url: job.url || null, source: job.source, postedAt: job.postedAt } });
       }
       const analysis = await analyzeJobWithLLM(profile, { role: job.title, company: job.company, location: job.location, description: job.description, salary: job.salary });
-      await prisma.jobAnalysis.upsert({ where: { jobId: savedJob.id }, update: analysis, create: { jobId: savedJob.id, ...analysis } });
+      console.info(`[job-search] ${job.title} analyzed by ${analysis.modelUsed || "unknown model"}`);
+      const { modelUsed: _modelUsed, ...persistedAnalysis } = analysis;
+      await prisma.jobAnalysis.upsert({ where: { jobId: savedJob.id }, update: persistedAnalysis, create: { jobId: savedJob.id, ...persistedAnalysis } });
         results.push({ ...job, id: savedJob.id, analysis });
       }
     }

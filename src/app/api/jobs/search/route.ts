@@ -69,7 +69,11 @@ export async function POST(request: NextRequest) {
   console.info(`[job-search] ${eligibleJobs.length} jobs passed hard filters`);
   let rankedJobs;
   try {
-    rankedJobs = await Promise.all(eligibleJobs.map(async (job) => {
+    const results: Array<Record<string, unknown> & { id: string; analysis: Awaited<ReturnType<typeof analyzeJobWithLLM>> }> = [];
+    let nextIndex = 0;
+    async function worker() {
+      while (nextIndex < eligibleJobs.length) {
+        const job = eligibleJobs[nextIndex++];
       const existing = job.url ? await prisma.job.findFirst({ where: { userId: user.id, url: job.url } }) : null;
       let savedJob;
       if (existing) {
@@ -79,8 +83,11 @@ export async function POST(request: NextRequest) {
       }
       const analysis = await analyzeJobWithLLM(profile, { role: job.title, company: job.company, location: job.location, description: job.description, salary: job.salary });
       await prisma.jobAnalysis.upsert({ where: { jobId: savedJob.id }, update: analysis, create: { jobId: savedJob.id, ...analysis } });
-      return { ...job, id: savedJob.id, analysis };
-    }));
+        results.push({ ...job, id: savedJob.id, analysis });
+      }
+    }
+    await Promise.all([worker(), worker()]);
+    rankedJobs = results;
   } catch (error) {
     console.error("[job-search] analysis failed", error);
     return NextResponse.json({ error: error instanceof Error ? error.message : "Job analysis failed." }, { status: 502 });

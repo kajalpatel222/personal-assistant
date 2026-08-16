@@ -117,7 +117,7 @@ export async function analyzeJobWithLLM(profile: AnalysisProfile, job: AnalysisJ
   const model = process.env.OPENROUTER_MODEL || "liquid/lfm-2.5-2.6b:free";
   if (!apiKey) throw new Error("OPENROUTER_API_KEY must be configured.");
 
-  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+  const request = () => fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: { "content-type": "application/json", Authorization: `Bearer ${apiKey}` },
     signal: AbortSignal.timeout(30000),
@@ -131,6 +131,11 @@ export async function analyzeJobWithLLM(profile: AnalysisProfile, job: AnalysisJ
       ],
     }),
   });
+  let response = await request();
+  if (response.status === 429) {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    response = await request();
+  }
   if (!response.ok) throw new Error(`OpenRouter returned ${response.status}.`);
   const payload = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
   const content = payload.choices?.[0]?.message?.content;

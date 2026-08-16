@@ -15,6 +15,8 @@ type ApifyJob = {
   postedRelative?: string;
 };
 
+export const maxDuration = 60;
+
 export async function POST(request: NextRequest) {
   const token = process.env.APIFY_API_TOKEN;
   const actorId = process.env.APIFY_INDEED_ACTOR_ID || "schnellscrapers~indeed-jobs-scraper";
@@ -34,7 +36,7 @@ export async function POST(request: NextRequest) {
   const response = await fetch(`https://api.apify.com/v2/acts/${actorId}/run-sync-get-dataset-items?token=${token}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ searches: [{ query: queries, location, country: "US" }], maxRecords: 20, maxPagesPerSearch: 1 }),
+    body: JSON.stringify({ searches: [{ query: queries, location, country: "US" }], maxRecords: 10, maxPagesPerSearch: 1 }),
   });
 
   if (!response.ok) {

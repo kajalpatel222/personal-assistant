@@ -18,6 +18,8 @@ type ApifyJob = {
 export const maxDuration = 60;
 
 export async function POST(request: NextRequest) {
+  const startedAt = Date.now();
+  console.info("[job-search] started");
   const token = process.env.APIFY_API_TOKEN;
   const actorId = process.env.APIFY_INDEED_ACTOR_ID || "schnellscrapers~indeed-jobs-scraper";
 
@@ -38,6 +40,7 @@ export async function POST(request: NextRequest) {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ searches: [{ query: queries, location, country: "US" }], maxRecords: 10, maxPagesPerSearch: 1 }),
   });
+  console.info(`[job-search] Apify completed in ${Date.now() - startedAt}ms`);
 
   if (!response.ok) {
     return NextResponse.json({ error: `Apify returned ${response.status}. Check the Actor ID and input schema.` }, { status: 502 });
@@ -45,6 +48,7 @@ export async function POST(request: NextRequest) {
 
   const items = await response.json() as ApifyJob[];
   const jobs = dedupeJobs(normalizeJobs(items));
+  console.info(`[job-search] normalized ${jobs.length} jobs`);
 
   if (!process.env.DATABASE_URL) {
     return NextResponse.json({ jobs, storage: "not_configured", error: "Jobs were fetched but not saved. DATABASE_URL is not configured." });
@@ -61,6 +65,7 @@ export async function POST(request: NextRequest) {
   };
   await prisma.candidateProfile.upsert({ where: { userId: user.id }, update: profile, create: { userId: user.id, ...profile } });
   const eligibleJobs = jobs.filter((job) => passesHardFilters(profile, job));
+  console.info(`[job-search] ${eligibleJobs.length} jobs passed hard filters`);
   const rankedJobs = await Promise.all(eligibleJobs.map(async (job) => {
     const existing = job.url ? await prisma.job.findFirst({ where: { userId: user.id, url: job.url } }) : null;
     let savedJob;
@@ -75,5 +80,6 @@ export async function POST(request: NextRequest) {
   }));
 
   rankedJobs.sort((a, b) => b.analysis.matchScore - a.analysis.matchScore);
+  console.info(`[job-search] completed in ${Date.now() - startedAt}ms`);
   return NextResponse.json({ jobs: rankedJobs, storage: "saved" });
 }

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { dedupeJobs } from "@/lib/jobs/dedupe";
 import { normalizeJobs } from "@/lib/jobs/normalize";
 import { prisma } from "@/lib/db";
-import { analyzeJob } from "@/lib/jobs/analyze";
+import { analyzeJobWithLLM } from "@/lib/jobs/analyze";
 
 type ApifyJob = {
   title?: string;
@@ -67,7 +67,7 @@ export async function POST(request: NextRequest) {
     } else {
       savedJob = await prisma.job.create({ data: { userId: user.id, company: job.company, role: job.title, description: job.description, salary: job.salary, location: job.location, url: job.url || null, source: job.source, postedAt: job.postedAt } });
     }
-    const analysis = analyzeJob(profile, savedJob);
+    const analysis = await analyzeJobWithLLM(profile, savedJob);
     await prisma.jobAnalysis.upsert({ where: { jobId: savedJob.id }, update: analysis, create: { jobId: savedJob.id, ...analysis } });
     rankedJobs.push({ ...job, id: savedJob.id, analysis });
   }

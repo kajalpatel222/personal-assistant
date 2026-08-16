@@ -85,3 +85,45 @@ export function analyzeJob(profile: AnalysisProfile, job: AnalysisJob): JobAnaly
   return { matchScore, recommendation, strengths, gaps, concerns, reasoning };
 }
 
+function parseAnalysis(value: unknown): JobAnalysisResult {
+  if (!value || typeof value !== "object") throw new Error("The model returned an invalid analysis.");
+  const result = value as Record<string, unknown>;
+  const matchScore = Number(result.matchScore);
+  if (!Number.isFinite(matchScore) || typeof result.recommendation !== "string" || typeof result.reasoning !== "string") {
+    throw new Error("The model returned an incomplete analysis.");
+  }
+  const asStrings = (field: string) => Array.isArray(result[field]) ? result[field].filter((item): item is string => typeof item === "string") : [];
+  return {
+    matchScore: Math.max(0, Math.min(100, Math.round(matchScore))),
+    recommendation: result.recommendation,
+    strengths: asStrings("strengths"),
+    gaps: asStrings("gaps"),
+    concerns: asStrings("concerns"),
+    reasoning: result.reasoning,
+  };
+}
+
+export async function analyzeJobWithLLM(profile: AnalysisProfile, job: AnalysisJob): Promise<JobAnalysisResult> {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  const model = process.env.OPENROUTER_MODEL;
+  if (!apiKey || !model) throw new Error("OPENROUTER_API_KEY and OPENROUTER_MODEL must be configured.");
+
+  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: { "content-type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model,
+      temperature: 0.1,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: "You are a careful career-matching assistant. Evaluate the candidate against the job using only the supplied information. Do not invent experience. Return only valid JSON with keys matchScore (integer 0-100), recommendation, strengths (array of strings), gaps (array of strings), concerns (array of strings), and reasoning (string)." },
+        { role: "user", content: JSON.stringify({ candidateProfile: profile, job }) },
+      ],
+    }),
+  });
+  if (!response.ok) throw new Error(`OpenRouter returned ${response.status}.`);
+  const payload = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
+  const content = payload.choices?.[0]?.message?.content;
+  if (!content) throw new Error("The model returned no analysis.");
+  return parseAnalysis(JSON.parse(content));
+}

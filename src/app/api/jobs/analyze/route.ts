@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { analyzeJob, type AnalysisJob, type AnalysisProfile } from "@/lib/jobs/analyze";
+import { analyzeJobWithLLM, type AnalysisJob, type AnalysisProfile } from "@/lib/jobs/analyze";
 
 const DEMO_EMAIL = "demo@personal-assistant.local";
 
@@ -30,7 +30,12 @@ export async function POST(request: NextRequest) {
   }
 
   if (!profile) return NextResponse.json({ error: "A candidate profile is required." }, { status: 400 });
-  const results = jobs.map((job) => ({ id: job.id, ...job, analysis: analyzeJob(profile as AnalysisProfile, job) }));
+  let results: Array<AnalysisJob & { id?: string; analysis: Awaited<ReturnType<typeof analyzeJobWithLLM>> }>;
+  try {
+    results = await Promise.all(jobs.map(async (job) => ({ id: job.id, ...job, analysis: await analyzeJobWithLLM(profile as AnalysisProfile, job) })));
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : "LLM analysis failed." }, { status: 502 });
+  }
 
   if (user && body.persist !== false) {
     await Promise.all(results.filter((result): result is typeof result & { id: string } => Boolean(result.id)).map((result) => prisma.jobAnalysis.upsert({

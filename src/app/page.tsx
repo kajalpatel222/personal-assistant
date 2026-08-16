@@ -44,7 +44,7 @@ export default function Home() {
     if (!savedProfile) return;
     setSearching(true);
     setError("");
-    const response = await fetch("/api/jobs/search", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(savedProfile) });
+    const response = await fetch("/api/jobs/search", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ roles: savedProfile.targetRoles, locations: savedProfile.preferredLocations, keywords: savedProfile.keywords }) });
     const result = await response.json() as { jobs?: Job[]; error?: string };
     setSearching(false);
     if (!response.ok) {

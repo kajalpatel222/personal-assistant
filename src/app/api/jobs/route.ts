@@ -36,6 +36,7 @@ export async function GET(request: NextRequest) {
   const [jobs, total] = await Promise.all([
     prisma.job.findMany({
       where,
+      include: { analysis: true },
       orderBy: { createdAt: "desc" },
       skip: (page - 1) * pageSize,
       take: pageSize,
@@ -55,6 +56,7 @@ export async function GET(request: NextRequest) {
       posted: job.postedAt,
       source: job.source,
       savedAt: job.createdAt,
+      analysis: job.analysis ?? undefined,
     })),
     page,
     pageSize,

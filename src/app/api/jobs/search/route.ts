@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { dedupeJobs } from "@/lib/jobs/dedupe";
 import { normalizeJobs } from "@/lib/jobs/normalize";
 import { prisma } from "@/lib/db";
+import { analyzeJob } from "@/lib/jobs/analyze";
 
 type ApifyJob = {
   title?: string;
@@ -22,7 +23,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "APIFY_API_TOKEN is not configured yet." }, { status: 503 });
   }
 
-  const body = await request.json() as { roles?: string; locations?: string; keywords?: string };
+  const body = await request.json() as { roles?: string; locations?: string; keywords?: string; workMode?: string; minimumSalary?: string };
   const queries = [body.roles, body.keywords].filter(Boolean).join(" ").trim();
   const location = body.locations?.split(",")[0]?.trim();
 
@@ -48,14 +49,29 @@ export async function POST(request: NextRequest) {
   }
 
   const user = await prisma.user.upsert({ where: { email: "demo@personal-assistant.local" }, update: {}, create: { email: "demo@personal-assistant.local" } });
+  const profile = {
+    targetRoles: body.roles?.split(",").map((value) => value.trim()).filter(Boolean) ?? [],
+    skills: body.keywords?.split(",").map((value) => value.trim()).filter(Boolean) ?? [],
+    searchKeywords: body.keywords?.split(",").map((value) => value.trim()).filter(Boolean) ?? [],
+    preferredLocations: body.locations?.split(",").map((value) => value.trim()).filter(Boolean) ?? [],
+    workModes: body.workMode ? [body.workMode] : [],
+    minimumSalary: Number.parseInt(body.minimumSalary?.replace(/[^0-9]/g, "") || "", 10) || null,
+  };
+  await prisma.candidateProfile.upsert({ where: { userId: user.id }, update: profile, create: { userId: user.id, ...profile } });
+  const rankedJobs = [];
   for (const job of jobs) {
     const existing = job.url ? await prisma.job.findFirst({ where: { userId: user.id, url: job.url } }) : null;
+    let savedJob;
     if (existing) {
-      await prisma.job.update({ where: { id: existing.id }, data: { company: job.company, role: job.title, description: job.description, salary: job.salary, location: job.location, source: job.source, postedAt: job.postedAt } });
+      savedJob = await prisma.job.update({ where: { id: existing.id }, data: { company: job.company, role: job.title, description: job.description, salary: job.salary, location: job.location, source: job.source, postedAt: job.postedAt } });
     } else {
-      await prisma.job.create({ data: { userId: user.id, company: job.company, role: job.title, description: job.description, salary: job.salary, location: job.location, url: job.url || null, source: job.source, postedAt: job.postedAt } });
+      savedJob = await prisma.job.create({ data: { userId: user.id, company: job.company, role: job.title, description: job.description, salary: job.salary, location: job.location, url: job.url || null, source: job.source, postedAt: job.postedAt } });
     }
+    const analysis = analyzeJob(profile, savedJob);
+    await prisma.jobAnalysis.upsert({ where: { jobId: savedJob.id }, update: analysis, create: { jobId: savedJob.id, ...analysis } });
+    rankedJobs.push({ ...job, id: savedJob.id, analysis });
   }
 
-  return NextResponse.json({ jobs, storage: "saved" });
+  rankedJobs.sort((a, b) => b.analysis.matchScore - a.analysis.matchScore);
+  return NextResponse.json({ jobs: rankedJobs, storage: "saved" });
 }

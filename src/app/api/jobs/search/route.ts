@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { dedupeJobs } from "@/lib/jobs/dedupe";
 import { normalizeJobs } from "@/lib/jobs/normalize";
+import { prisma } from "@/lib/db";
 
 type ApifyJob = {
   title?: string;
@@ -41,5 +42,20 @@ export async function POST(request: NextRequest) {
 
   const items = await response.json() as ApifyJob[];
   const jobs = dedupeJobs(normalizeJobs(items));
-  return NextResponse.json({ jobs });
+
+  if (!process.env.DATABASE_URL) {
+    return NextResponse.json({ jobs, storage: "not_configured", error: "Jobs were fetched but not saved. DATABASE_URL is not configured." });
+  }
+
+  const user = await prisma.user.upsert({ where: { email: "demo@personal-assistant.local" }, update: {}, create: { email: "demo@personal-assistant.local" } });
+  for (const job of jobs) {
+    const existing = job.url ? await prisma.job.findFirst({ where: { userId: user.id, url: job.url } }) : null;
+    if (existing) {
+      await prisma.job.update({ where: { id: existing.id }, data: { company: job.company, role: job.title, description: job.description, salary: job.salary, location: job.location, source: job.source, postedAt: job.postedAt } });
+    } else {
+      await prisma.job.create({ data: { userId: user.id, company: job.company, role: job.title, description: job.description, salary: job.salary, location: job.location, url: job.url || null, source: job.source, postedAt: job.postedAt } });
+    }
+  }
+
+  return NextResponse.json({ jobs, storage: "saved" });
 }

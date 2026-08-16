@@ -11,12 +11,16 @@ type CandidateProfile = {
   minimumSalary: string;
 };
 
+type Job = { title: string; company: string; location: string; description: string; url: string; salary: string | null; posted: string | null };
+
 const initialProfile: CandidateProfile = { resumeFileName: "", targetRoles: "", preferredLocations: "", keywords: "", workMode: "remote-hybrid", minimumSalary: "" };
 
 export default function Home() {
   const [profile, setProfile] = useState(initialProfile);
   const [savedProfile, setSavedProfile] = useState<CandidateProfile | null>(null);
   const [error, setError] = useState("");
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [searching, setSearching] = useState(false);
 
   function updateProfile(field: keyof CandidateProfile, value: string) {
     setProfile((current) => ({ ...current, [field]: value }));
@@ -36,6 +40,20 @@ export default function Home() {
     setSavedProfile(profile);
   }
 
+  async function searchJobs() {
+    if (!savedProfile) return;
+    setSearching(true);
+    setError("");
+    const response = await fetch("/api/jobs/search", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(savedProfile) });
+    const result = await response.json() as { jobs?: Job[]; error?: string };
+    setSearching(false);
+    if (!response.ok) {
+      setError(result.error || "Job search failed.");
+      return;
+    }
+    setJobs(result.jobs || []);
+  }
+
   if (savedProfile) {
     return (
       <main className="min-h-screen bg-[#f6f7f2] px-6 py-10 text-[#17221c] sm:px-10 lg:px-16">
@@ -46,6 +64,9 @@ export default function Home() {
             <h1 className="text-5xl leading-[1.05] font-semibold tracking-[-0.04em]">Your search profile is ready.</h1>
             <p className="mt-6 text-lg leading-8 text-[#607064]">Review the details we&apos;ll use to find relevant job postings.</p>
             <div className="mt-10 grid gap-4 rounded-3xl border border-[#dbe5d8] bg-white p-7 shadow-[0_20px_60px_rgba(47,96,71,0.08)]"><ProfileRow label="Resume" value={savedProfile.resumeFileName} /><ProfileRow label="Target roles" value={savedProfile.targetRoles} /><ProfileRow label="Locations" value={savedProfile.preferredLocations} /><ProfileRow label="Keywords" value={savedProfile.keywords || "None added"} /><ProfileRow label="Work mode" value={savedProfile.workMode} /><ProfileRow label="Minimum salary" value={savedProfile.minimumSalary || "No minimum"} /></div>
+            <div className="mt-8 flex items-center justify-between gap-4"><div><h2 className="text-xl font-semibold">Job discovery</h2><p className="mt-1 text-sm text-[#7b8b7e]">Search Indeed through Apify using this profile.</p></div><button className="rounded-full bg-[#2f6047] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#244c38] disabled:cursor-wait disabled:opacity-60" disabled={searching} onClick={searchJobs} type="button">{searching ? "Searching…" : "Search jobs"}</button></div>
+            {error && <p className="mt-4 rounded-xl bg-[#fff1eb] px-4 py-3 text-sm text-[#a34f2e]" role="alert">{error}</p>}
+            {jobs.length > 0 && <div className="mt-6 grid gap-4">{jobs.map((job, index) => <article className="rounded-2xl border border-[#dbe5d8] bg-white p-5" key={`${job.url}-${index}`}><div className="flex items-start justify-between gap-4"><div><h3 className="font-semibold">{job.title}</h3><p className="mt-1 text-sm text-[#607064]">{job.company} · {job.location}</p></div>{job.posted && <span className="text-xs text-[#7b8b7e]">{job.posted}</span>}</div>{job.salary && <p className="mt-3 text-sm font-medium text-[#47715b]">{job.salary}</p>}<p className="mt-3 line-clamp-3 text-sm leading-6 text-[#718074]">{job.description}</p>{job.url && <a className="mt-4 inline-block text-sm font-semibold text-[#2f6047] underline" href={job.url} rel="noreferrer" target="_blank">View posting →</a>}</article>)}</div>}
             <button className="mt-8 rounded-full border border-[#b8cdb8] px-6 py-3 text-sm font-semibold text-[#2f6047] transition hover:bg-white" onClick={() => setSavedProfile(null)} type="button">Edit profile</button>
           </section>
         </div>

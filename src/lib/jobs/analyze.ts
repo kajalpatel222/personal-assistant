@@ -138,7 +138,7 @@ export async function analyzeJobWithLLM(profile: AnalysisProfile, job: AnalysisJ
     response = await request();
   }
   if (!response.ok) throw new Error(`OpenRouter returned ${response.status}.`);
-  const payload = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
+  const payload = await response.json() as { model?: string; choices?: Array<{ message?: { content?: string } }> };
   const content = payload.choices?.[0]?.message?.content;
   if (!content) throw new Error("The model returned no analysis.");
   return { ...parseAnalysis(JSON.parse(content)), modelUsed: payload.model || model };

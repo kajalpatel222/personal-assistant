@@ -34,8 +34,20 @@ const nestedText = (value: unknown, ...keys: string[]): string | null => {
 export function normalizeJob(raw: unknown): NormalizedJob {
   const job = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
   const salaryValue = job.salary;
-  const postedAt = firstText(job.postedAt, job.datePosted, job.postedDate);
-  const posted = firstText(job.postedRelative, job.posted, job.postedLabel, job.postedText);
+  const postedAt = firstText(
+    job.postedAt,
+    job.datePosted,
+    job.postedDate,
+    job.publishedAt,
+    job.published_at,
+    job.createdAt,
+    job.created_at,
+    job.updatedAt,
+    job.updated_at,
+    job.firstPublished,
+    job.first_published,
+  );
+  const posted = firstText(job.postedRelative, job.posted, job.postedLabel, job.postedText, job.date);
 
   return {
     title: firstText(job.title, job.jobTitle, job.positionName) || "Untitled role",
@@ -58,4 +70,13 @@ export function normalizeJob(raw: unknown): NormalizedJob {
 
 export function normalizeJobs(rawJobs: unknown): NormalizedJob[] {
   return Array.isArray(rawJobs) ? rawJobs.map(normalizeJob) : [];
+}
+
+export function wasPostedInLastDay(job: NormalizedJob, now = Date.now()): boolean {
+  const relativeDate = job.posted?.toLowerCase() || "";
+  if (/\b(today|just posted|minutes? ago|hours? ago)\b/.test(relativeDate)) return true;
+
+  if (!job.postedAt) return false;
+  const postedTime = Date.parse(job.postedAt);
+  return Number.isFinite(postedTime) && postedTime <= now && now - postedTime <= 24 * 60 * 60 * 1000;
 }

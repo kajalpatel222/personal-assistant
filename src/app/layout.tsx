@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { AppNavigation } from "./_components/app-navigation";
 
 export const metadata: Metadata = {
   title: "Personal Assistant",
@@ -7,5 +8,5 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
-  return <html lang="en" className="h-full antialiased" suppressHydrationWarning><body className="min-h-full flex flex-col">{children}</body></html>;
+  return <html lang="en" className="h-full antialiased" suppressHydrationWarning><body className="min-h-full flex flex-col"><AppNavigation />{children}</body></html>;
 }

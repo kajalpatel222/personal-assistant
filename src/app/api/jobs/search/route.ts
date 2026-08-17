@@ -1,22 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { dedupeJobs } from "@/lib/jobs/dedupe";
-import { normalizeJobs } from "@/lib/jobs/normalize";
+import { wasPostedInLastDay } from "@/lib/jobs/normalize";
 import { prisma } from "@/lib/db";
 import { analyzeJob, analyzeJobWithLLM, passesHardFilters } from "@/lib/jobs/analyze";
-
-type ApifyJob = {
-  title?: string;
-  company?: string;
-  location?: string;
-  description?: string;
-  viewJobUrl?: string;
-  applyUrl?: string;
-  salary?: { text?: string } | string;
-  postedRelative?: string;
-};
+import { searchAshbyJobs } from "@/lib/jobs/sources/ashby";
+import { searchGreenhouseJobs } from "@/lib/jobs/sources/greenhouse";
+import { searchIndeedJobs } from "@/lib/jobs/sources/indeed";
 
 export const maxDuration = 60;
-const APIFY_TIMEOUT_MS = 45_000;
+const SOURCE_TIMEOUT_MS = 45_000;
+const RESULTS_PER_SOURCE = 5;
+const MAX_JOBS_TO_ANALYZE = 10;
 
 function shouldUseDatabase() {
   const databaseUrl = process.env.DATABASE_URL;
@@ -34,13 +28,12 @@ export async function POST(request: NextRequest) {
   const startedAt = Date.now();
   console.info("[job-search] started");
   const token = process.env.APIFY_API_TOKEN;
-  const actorId = process.env.APIFY_INDEED_ACTOR_ID || "schnellscrapers~indeed-jobs-scraper";
 
   if (!token) {
     return NextResponse.json({ error: "APIFY_API_TOKEN is not configured yet." }, { status: 503 });
   }
 
-  const body = await request.json() as { roles?: string; locations?: string; keywords?: string; workMode?: string; minimumSalary?: string; resumeText?: string };
+  const body = await request.json() as { roles?: string; locations?: string; keywords?: string; workMode?: string; minimumSalary?: string; resumeText?: string; postedToday?: boolean };
   const queries = [body.roles, body.keywords].filter(Boolean).join(" ").trim();
   const location = body.locations?.split(",")[0]?.trim();
 
@@ -48,36 +41,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Target roles and a location are required." }, { status: 400 });
   }
 
-  let response: Response;
-  try {
-    response = await fetch(`https://api.apify.com/v2/acts/${actorId}/run-sync-get-dataset-items?token=${token}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      signal: AbortSignal.timeout(APIFY_TIMEOUT_MS),
-      body: JSON.stringify({ searches: [{ query: queries, location, country: "US" }], maxRecords: 5, maxPagesPerSearch: 1 }),
-    });
-  } catch (error) {
-    const isTimeout = error instanceof Error && ["AbortError", "TimeoutError"].includes(error.name);
-    const elapsedSeconds = Math.ceil((Date.now() - startedAt) / 1000);
-    console.warn(`[job-search] Apify ${isTimeout ? "timed out" : "request failed"} after ${elapsedSeconds}s`);
-    return NextResponse.json(
-      {
-        error: isTimeout
-          ? "Job search is taking longer than expected. Please try again in a moment."
-          : "We could not reach the job provider. Please try again in a moment.",
-      },
-      { status: isTimeout ? 504 : 502 },
-    );
-  }
-  console.info(`[job-search] Apify completed in ${Date.now() - startedAt}ms`);
-
-  if (!response.ok) {
-    return NextResponse.json({ error: `Apify returned ${response.status}. Check the Actor ID and input schema.` }, { status: 502 });
-  }
-
-  const items = await response.json() as ApifyJob[];
-  const jobs = dedupeJobs(normalizeJobs(items));
-  console.info(`[job-search] normalized ${jobs.length} jobs`);
+  const postedToday = body.postedToday ?? true;
+  const sourceResults = await Promise.all([
+    searchIndeedJobs({ query: queries, location, limit: RESULTS_PER_SOURCE, postedToday, signal: AbortSignal.timeout(SOURCE_TIMEOUT_MS) }),
+    searchGreenhouseJobs({ query: queries, location, limit: RESULTS_PER_SOURCE, postedToday, signal: AbortSignal.timeout(SOURCE_TIMEOUT_MS) }),
+    searchAshbyJobs({ query: queries, location, limit: RESULTS_PER_SOURCE, postedToday, signal: AbortSignal.timeout(SOURCE_TIMEOUT_MS) }),
+  ]);
+  const collectedJobs = dedupeJobs(sourceResults.flatMap((result) => result.jobs));
+  const jobs = postedToday ? collectedJobs.filter(wasPostedInLastDay) : collectedJobs;
+  console.info(`[job-search] collected ${jobs.length} jobs from ${sourceResults.map((result) => `${result.source}:${result.jobs.length}`).join(", ")}`);
 
   const profile = {
     targetRoles: body.roles?.split(",").map((value) => value.trim()).filter(Boolean) ?? [],
@@ -90,7 +62,7 @@ export async function POST(request: NextRequest) {
   };
 
   const eligibleJobs = jobs.filter((job) => passesHardFilters(profile, { role: job.title, company: job.company, location: job.location, description: job.description, salary: job.salary }));
-  const jobsToAnalyze = eligibleJobs.length > 0 ? eligibleJobs : jobs;
+  const jobsToAnalyze = (eligibleJobs.length > 0 ? eligibleJobs : jobs).slice(0, MAX_JOBS_TO_ANALYZE);
   const usedFilterFallback = eligibleJobs.length === 0 && jobs.length > 0;
   console.info(`[job-search] ${eligibleJobs.length} jobs passed hard filters${usedFilterFallback ? "; analyzing fetched jobs instead" : ""}`);
 
@@ -181,8 +153,11 @@ export async function POST(request: NextRequest) {
       jobs: rankedJobs,
       storage,
       discovered: jobs.length,
+      collected: collectedJobs.length,
+      postedToday,
       hardFilterMatches: eligibleJobs.length,
       usedFilterFallback,
+      sources: sourceResults.map((result) => ({ source: result.source, jobs: result.jobs.length, error: result.error || null })),
     });
   } catch (error) {
     console.error("[job-search] analysis failed", error);

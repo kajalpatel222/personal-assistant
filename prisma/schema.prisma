@@ -14,6 +14,9 @@ model User {
   candidateProfile CandidateProfile?
   jobs             Job[]
   applications     Application[]
+  gmailConnection  GmailConnection?
+  gmailMessages    GmailMessage[]
+  emailActions     EmailAction[]
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
 }
@@ -85,4 +88,55 @@ model Application {
   updatedAt DateTime  @updatedAt
 
   @@unique([userId, jobId])
+}
+
+model GmailConnection {
+  id                    String   @id @default(cuid())
+  userId                String   @unique
+  gmailAddress          String
+  refreshTokenEncrypted String
+  scope                 String
+  lastSyncedAt          DateTime?
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+}
+
+model GmailMessage {
+  id             String   @id @default(cuid())
+  userId         String
+  gmailMessageId String   @unique
+  threadId       String
+  sender         String?
+  subject        String?
+  snippet        String?
+  category       String
+  labelIds       String[]
+  isUnread       Boolean  @default(false)
+  threadHasReply Boolean  @default(false)
+  receivedAt     DateTime?
+  action         EmailAction?
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([userId, receivedAt])
+}
+
+model EmailAction {
+  id             String   @id @default(cuid())
+  userId         String
+  gmailMessageId String   @unique
+  actionType     String
+  priority       Int
+  priorityReason String
+  draftText      String?
+  draftModel     String?
+  status         String   @default("OPEN")
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gmailMessage   GmailMessage @relation(fields: [gmailMessageId], references: [gmailMessageId], onDelete: Cascade)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([userId, status, priority])
 }

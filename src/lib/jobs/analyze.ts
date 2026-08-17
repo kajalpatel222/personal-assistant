@@ -5,6 +5,7 @@ export type AnalysisProfile = {
   preferredLocations?: string[];
   workModes?: string[];
   minimumSalary?: number | null;
+  resumeText?: string;
 };
 
 export type AnalysisJob = {
@@ -26,17 +27,12 @@ export type JobAnalysisResult = {
 };
 
 export function passesHardFilters(profile: AnalysisProfile, job: AnalysisJob) {
-  const locations = profile.preferredLocations ?? [];
-  const jobLocation = clean(job.location ?? "");
-  const locationMatches = !locations.length || locations.some((location) => jobLocation.includes(clean(location)) || clean(location).includes(jobLocation));
   const salary = parseSalary(job.salary);
   const salaryMatches = profile.minimumSalary == null || salary == null || salary >= profile.minimumSalary;
-  return locationMatches && salaryMatches;
+  return salaryMatches;
 }
 
 const clean = (value: string) => value.toLowerCase().replace(/[^a-z0-9+#.]+/g, " ").trim();
-const tokens = (value: string) => new Set(clean(value).split(/\s+/).filter((token) => token.length > 1));
-
 const includesPhrase = (haystack: string, needle: string) => {
   const target = clean(needle);
   return target.length > 1 && clean(haystack).includes(target);
@@ -56,9 +52,10 @@ const roleMatches = (jobRole: string, roles: string[]) => roles.some((role) => i
 
 export function analyzeJob(profile: AnalysisProfile, job: AnalysisJob): JobAnalysisResult {
   const roles = profile.targetRoles ?? [];
-  const skills = [...(profile.skills ?? []), ...(profile.searchKeywords ?? [])];
+  const resumeSignals = extractResumeSignals(profile.resumeText ?? "");
+  const skills = [...(profile.skills ?? []), ...(profile.searchKeywords ?? []), ...resumeSignals];
   const locationPreferences = profile.preferredLocations ?? [];
-  const jobText = [job.role, job.description, job.location].filter(Boolean).join(" ");
+  const jobText = [job.role, job.description, job.location, profile.resumeText].filter(Boolean).join(" ");
   const matchedSkills = overlap(jobText, skills);
   const missingSkills = skills.filter((skill) => !matchedSkills.includes(skill));
   const roleMatch = roles.length === 0 || roleMatches(job.role, roles);
@@ -95,6 +92,25 @@ export function analyzeJob(profile: AnalysisProfile, job: AnalysisJob): JobAnaly
   return { matchScore, recommendation, strengths, gaps, concerns, reasoning };
 }
 
+function extractResumeSignals(resumeText: string) {
+  const stopwords = new Set([
+    "the", "and", "with", "for", "from", "that", "this", "you", "your", "are", "was", "were", "has", "have", "had",
+    "but", "not", "all", "any", "can", "will", "our", "their", "them", "they", "she", "him", "her", "his", "hers",
+    "team", "work", "worked", "working", "experience", "skills", "skill", "role", "roles", "resume", "phone", "email",
+  ]);
+  const counts = new Map<string, number>();
+  for (const rawToken of resumeText.toLowerCase().split(/[^a-z0-9+#.]+/g)) {
+    const token = rawToken.trim();
+    if (token.length < 3 || stopwords.has(token)) continue;
+    if (!/[a-z]/.test(token)) continue;
+    counts.set(token, (counts.get(token) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([token]) => token)
+    .slice(0, 20);
+}
+
 function parseAnalysis(value: unknown): JobAnalysisResult {
   if (!value || typeof value !== "object") throw new Error("The model returned an invalid analysis.");
   const result = value as Record<string, unknown>;
@@ -128,7 +144,7 @@ export async function analyzeJobWithLLM(profile: AnalysisProfile, job: AnalysisJ
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: "You are a careful career-matching assistant. Evaluate the candidate against the job using only the supplied information. Do not invent experience. Return only valid JSON with keys matchScore (integer 0-100), recommendation, strengths (array of strings), gaps (array of strings), concerns (array of strings), and reasoning (string). Keep the UI concise: maximum 3 strengths, 3 gaps, 2 concerns; each item under 12 words; reasoning under 30 words." },
-        { role: "user", content: JSON.stringify({ candidateProfile: profile, job }) },
+        { role: "user", content: JSON.stringify({ candidateProfile: profile, resumeText: profile.resumeText, job }) },
       ],
     }),
   });
@@ -137,9 +153,27 @@ export async function analyzeJobWithLLM(profile: AnalysisProfile, job: AnalysisJ
     await new Promise((resolve) => setTimeout(resolve, 1500));
     response = await request();
   }
-  if (!response.ok) throw new Error(`OpenRouter returned ${response.status}.`);
-  const payload = await response.json() as { model?: string; choices?: Array<{ message?: { content?: string } }> };
+  const responseText = await response.text();
+  if (!response.ok) {
+    throw new Error(`OpenRouter returned ${response.status}.${responseText ? ` ${responseText.slice(0, 200)}` : ""}`);
+  }
+
+  let payload: { model?: string; choices?: Array<{ message?: { content?: string } }> };
+  try {
+    payload = JSON.parse(responseText) as { model?: string; choices?: Array<{ message?: { content?: string } }> };
+  } catch {
+    throw new Error(`OpenRouter returned invalid JSON.${responseText ? ` ${responseText.slice(0, 200)}` : ""}`);
+  }
+
   const content = payload.choices?.[0]?.message?.content;
   if (!content) throw new Error("The model returned no analysis.");
-  return { ...parseAnalysis(JSON.parse(content)), modelUsed: payload.model || model };
+
+  let parsedContent: unknown;
+  try {
+    parsedContent = JSON.parse(content);
+  } catch {
+    throw new Error(`The model returned non-JSON content.${content.slice(0, 200)}`);
+  }
+
+  return { ...parseAnalysis(parsedContent), modelUsed: payload.model || model };
 }

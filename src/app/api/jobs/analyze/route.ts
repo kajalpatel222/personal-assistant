@@ -15,14 +15,17 @@ export async function POST(request: NextRequest) {
   const body = await request.json() as RequestBody;
   const suppliedJobs = body.jobs ?? [];
   let jobs: Array<AnalysisJob & { id?: string }> = suppliedJobs;
-  let user: { id: string; candidateProfile?: AnalysisProfile | null } | null = null;
+  let userId: string | null = null;
   let profile = body.profile;
 
   if (!suppliedJobs.length || !profile) {
     if (!process.env.DATABASE_URL) return NextResponse.json({ error: "Provide jobs and a profile, or configure DATABASE_URL." }, { status: 503 });
-    user = await prisma.user.findUnique({ where: { email: DEMO_EMAIL }, include: { candidateProfile: true } });
+    const user = await prisma.user.findUnique({ where: { email: DEMO_EMAIL }, include: { candidateProfile: true } });
     if (!user) return NextResponse.json({ error: "The demo user has not been created yet. Search for jobs first." }, { status: 404 });
-    profile ??= user.candidateProfile ?? undefined;
+    userId = user.id;
+    profile ??= user.candidateProfile
+      ? { ...user.candidateProfile, resumeText: user.candidateProfile.resumeText ?? undefined }
+      : undefined;
     if (!profile) return NextResponse.json({ error: "No candidate profile is available for analysis." }, { status: 400 });
     if (!suppliedJobs.length) {
       jobs = await prisma.job.findMany({ where: { userId: user.id, ...(body.jobIds?.length ? { id: { in: body.jobIds } } : {}) }, orderBy: { createdAt: "desc" } });
@@ -37,7 +40,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "LLM analysis failed." }, { status: 502 });
   }
 
-  if (user && body.persist !== false) {
+  if (userId && body.persist !== false) {
     await Promise.all(results.filter((result): result is typeof result & { id: string } => Boolean(result.id)).map((result) => prisma.jobAnalysis.upsert({
       where: { jobId: result.id },
       update: result.analysis,
@@ -45,5 +48,5 @@ export async function POST(request: NextRequest) {
     })));
   }
 
-  return NextResponse.json({ jobs: results, persisted: Boolean(user && body.persist !== false) });
+  return NextResponse.json({ jobs: results, persisted: Boolean(userId && body.persist !== false) });
 }

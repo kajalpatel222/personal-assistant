@@ -51,7 +51,7 @@ export async function POST(request: NextRequest) {
   const jobs = postedToday ? collectedJobs.filter(wasPostedInLastDay) : collectedJobs;
   console.info(`[job-search] collected ${jobs.length} jobs from ${sourceResults.map((result) => `${result.source}:${result.jobs.length}`).join(", ")}`);
 
-  const profile = {
+  let profile = {
     targetRoles: body.roles?.split(",").map((value) => value.trim()).filter(Boolean) ?? [],
     skills: body.keywords?.split(",").map((value) => value.trim()).filter(Boolean) ?? [],
     searchKeywords: body.keywords?.split(",").map((value) => value.trim()).filter(Boolean) ?? [],
@@ -75,6 +75,8 @@ export async function POST(request: NextRequest) {
       try {
         const user = await prisma.user.upsert({ where: { email: "demo@personal-assistant.local" }, update: {}, create: { email: "demo@personal-assistant.local" } });
         userId = user.id;
+        const existingProfile = await prisma.candidateProfile.findUnique({ where: { userId: user.id }, select: { resumeText: true, resumeFileName: true } });
+        if (!profile.resumeText && existingProfile?.resumeText) profile = { ...profile, resumeText: existingProfile.resumeText };
         await prisma.candidateProfile.upsert({ where: { userId: user.id }, update: profile, create: { userId: user.id, ...profile } });
       } catch (dbError) {
         console.warn("[job-search] database unavailable, continuing without persistence", dbError);

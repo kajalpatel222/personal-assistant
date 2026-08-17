@@ -17,6 +17,7 @@ export async function GET() {
         return {
           id: message.id,
           gmailMessageId: message.gmailMessageId,
+          threadId: message.threadId,
           sender: message.sender,
           subject: message.subject,
           snippet: message.snippet,

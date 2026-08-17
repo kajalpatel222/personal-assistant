@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { decryptRefreshToken, refreshAccessToken } from "@/lib/gmail";
-import { matchApplicationConfirmation } from "@/lib/application-confirmation";
 
 const DEMO_EMAIL = "demo@personal-assistant.local";
 const JOB_MAIL_QUERY = "newer_than:365d {\"application received\" \"thank you for applying\" \"job application\" \"next steps\" \"hiring team\" interview recruiter \"job opportunity\" from:linkedin.com from:greenhouse.io from:lever.co from:ashbyhq.com}";
@@ -17,6 +16,7 @@ type GmailMessage = {
 };
 
 type GmailThread = { messages?: GmailMessage[] };
+type ThreadState = { lastMessageSent: boolean; lastMessageAt: Date | null };
 
 function header(message: GmailMessage, name: string) {
   return message.payload?.headers?.find((item) => item.name.toLowerCase() === name.toLowerCase())?.value || null;
@@ -54,46 +54,35 @@ export async function POST() {
       messages.push(...batch.filter((message): message is GmailMessage => Boolean(message)));
     }
 
-    const threadReplyStatus = new Map<string, boolean>();
+    const threadStates = new Map<string, ThreadState>();
     const threadIds = [...new Set(messages.map((message) => message.threadId))];
     for (let start = 0; start < threadIds.length; start += 10) {
       const batch = await Promise.all(threadIds.slice(start, start + 10).map(async (threadId) => {
         const response = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/threads/${threadId}?format=metadata&metadataHeaders=From`, { headers: { authorization: `Bearer ${accessToken}` }, cache: "no-store" });
         const thread = response.ok ? await response.json() as GmailThread : null;
-        return [threadId, Boolean(thread?.messages?.some((item) => item.labelIds?.includes("SENT")))] as const;
+        const orderedMessages = [...(thread?.messages || [])].sort((a, b) => Number(a.internalDate || 0) - Number(b.internalDate || 0));
+        const latest = orderedMessages.at(-1);
+        return [threadId, { lastMessageSent: Boolean(latest?.labelIds?.includes("SENT")), lastMessageAt: latest?.internalDate ? new Date(Number(latest.internalDate)) : null }] as const;
       }));
-      batch.forEach(([threadId, hasReply]) => threadReplyStatus.set(threadId, hasReply));
+      batch.forEach(([threadId, state]) => threadStates.set(threadId, state));
     }
 
     await Promise.all(messages.map((message) => {
       const subject = header(message, "Subject") || "(No subject)";
       const snippet = message.snippet || "";
-      const receivedAt = message.internalDate ? new Date(Number(message.internalDate)) : null;
+      const threadState = threadStates.get(message.threadId);
+      const receivedAt = threadState?.lastMessageAt || (message.internalDate ? new Date(Number(message.internalDate)) : null);
       const labelIds = message.labelIds || [];
       const isUnread = labelIds.includes("UNREAD");
-      const threadHasReply = threadReplyStatus.get(message.threadId) || false;
+      const threadHasReply = threadState?.lastMessageSent || false;
       return prisma.gmailMessage.upsert({
         where: { gmailMessageId: message.id },
         update: { sender: header(message, "From"), subject, snippet, category: category(subject, snippet), labelIds, isUnread, threadHasReply, receivedAt },
         create: { userId: user.id, gmailMessageId: message.id, threadId: message.threadId, sender: header(message, "From"), subject, snippet, category: category(subject, snippet), labelIds, isUnread, threadHasReply, receivedAt },
       });
     }));
-    const jobs = await prisma.job.findMany({ where: { userId: user.id }, select: { id: true, company: true, role: true } });
-    let applicationConfirmations = 0;
-    for (const message of messages) {
-      const subject = header(message, "Subject") || "(No subject)";
-      const snippet = message.snippet || "";
-      if (category(subject, snippet) !== "APPLICATION") continue;
-      const job = matchApplicationConfirmation(jobs, { sender: header(message, "From"), subject, snippet });
-      if (!job) continue;
-      const existing = await prisma.application.findUnique({ where: { userId_jobId: { userId: user.id, jobId: job.id } } });
-      if (existing?.status === "NOT_PURSUING") continue;
-      const appliedAt = message.internalDate ? new Date(Number(message.internalDate)) : new Date();
-      await prisma.application.upsert({ where: { userId_jobId: { userId: user.id, jobId: job.id } }, update: { status: "APPLIED", appliedAt, notes: "Confirmed automatically from a Gmail application receipt." }, create: { userId: user.id, jobId: job.id, status: "APPLIED", appliedAt, notes: "Confirmed automatically from a Gmail application receipt." } });
-      applicationConfirmations += 1;
-    }
     await prisma.gmailConnection.update({ where: { userId: user.id }, data: { lastSyncedAt: new Date() } });
-    return NextResponse.json({ scanned: items.length, synced: messages.length, applicationConfirmations, query: JOB_MAIL_QUERY });
+    return NextResponse.json({ scanned: items.length, synced: messages.length, query: JOB_MAIL_QUERY });
   } catch (error) {
     console.error("[gmail] sync failed", error);
     return NextResponse.json({ error: "Gmail sync failed. Reconnect Gmail and try again." }, { status: 502 });

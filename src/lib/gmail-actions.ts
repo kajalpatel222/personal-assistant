@@ -1,5 +1,8 @@
 export type ActionableEmail = {
   category: string;
+  sender: string | null;
+  subject: string | null;
+  snippet: string | null;
   isUnread: boolean;
   threadHasReply: boolean;
   receivedAt: Date | string | null;
@@ -12,15 +15,22 @@ export type EmailActionPlan = {
 };
 
 export function planEmailAction(message: ActionableEmail): EmailActionPlan | null {
-  if (message.category === "REJECTED") return null;
-  const daysSince = message.receivedAt ? Math.floor((Date.now() - new Date(message.receivedAt).getTime()) / 86_400_000) : 0;
+  const content = `${message.sender || ""} ${message.subject || ""} ${message.snippet || ""}`.toLowerCase();
+  const isInformational = /job alert|newsletter|digest|people you may know|recommended jobs|thank you for applying|application received/.test(content);
+  const isCareerRelated = /\b(job|career|role|recruiter|hiring|interview|application|assessment|offer|position|employer)\b/.test(content);
+  const hasDeadlineOrSubmission = /deadline|due date|due by|respond by|action required|complete (?:the )?(?:assessment|application)|submit|submission|assessment|take-home|coding challenge|rsvp/.test(content);
+  const isLinkedInInMail = (message.sender || "").toLowerCase().includes("inmail-hit-reply@linkedin.com");
+  const daysSinceLastActivity = message.receivedAt ? Math.floor((Date.now() - new Date(message.receivedAt).getTime()) / 86_400_000) : 0;
+
+  if (message.category === "REJECTED" || isInformational) return null;
   const unreadBoost = message.isUnread ? 8 : 0;
 
-  if (message.category === "OFFER") return { actionType: "REPLY", priority: Math.min(100, 92 + unreadBoost), priorityReason: "Offer-related message needs prompt review and a response." };
+  if (message.category === "OFFER" && !message.threadHasReply) return { actionType: "REPLY", priority: Math.min(100, 92 + unreadBoost), priorityReason: "Offer-related message needs prompt review and a response." };
   if (message.category === "INTERVIEW" && !message.threadHasReply) return { actionType: "REPLY", priority: Math.min(100, 88 + unreadBoost), priorityReason: message.isUnread ? "Unread interview-related message has no reply in the thread." : "Interview-related message has no reply in the thread." };
+  if (isLinkedInInMail && !message.threadHasReply) return { actionType: "REPLY", priority: Math.min(100, 74 + unreadBoost), priorityReason: "LinkedIn InMail needs a response." };
   if (message.category === "OUTREACH" && !message.threadHasReply) return { actionType: "REPLY", priority: Math.min(100, 74 + unreadBoost), priorityReason: message.isUnread ? "Unread recruiter outreach has no reply in the thread." : "Recruiter outreach has no reply in the thread." };
-  if (message.category === "APPLICATION" && !message.threadHasReply && daysSince >= 7) return { actionType: "FOLLOW_UP", priority: Math.min(100, 58 + unreadBoost + Math.min(daysSince - 7, 12)), priorityReason: `Application update is ${daysSince} days old with no reply in the thread.` };
-  if (message.isUnread && !message.threadHasReply) return { actionType: "REVIEW", priority: 40, priorityReason: "Unread job-related message needs review." };
+  if (message.threadHasReply && isCareerRelated && daysSinceLastActivity >= 7) return { actionType: "FOLLOW_UP", priority: Math.min(100, 65 + unreadBoost + Math.min(daysSinceLastActivity - 7, 12)), priorityReason: `Your last message in this career conversation was ${daysSinceLastActivity} days ago.` };
+  if (isCareerRelated && hasDeadlineOrSubmission) return { actionType: "REVIEW", priority: Math.min(100, 78 + unreadBoost), priorityReason: "Career-related deadline, submission, or event needs review." };
   return null;
 }
 
